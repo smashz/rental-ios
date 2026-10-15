@@ -127,7 +127,7 @@ struct VehicleCard: View {
                         .font(.caption2.weight(.bold))
                         .foregroundColor(Theme.ink)
                         .padding(.horizontal, 8).padding(.vertical, 5)
-                        .background(.white, in: Capsule())
+                        .background(Theme.surface, in: Capsule())
                         .padding(10)
                         .frame(maxWidth: .infinity, alignment: .leading)
                 }
