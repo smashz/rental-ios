@@ -12,6 +12,8 @@ struct CheckoutView: View {
     @State private var end = Calendar.current.date(byAdding: .day, value: 3, to: Date())!
     @State private var plan: ProtectionPlan = .standard
     @State private var confirmed = false
+    @State private var booking = false
+    @State private var bookedStatus: Trip.Status = .upcoming
 
     enum ProtectionPlan: String, CaseIterable, Identifiable {
         case minimum = "Minimum", standard = "Standard", premier = "Premier"
@@ -52,10 +54,19 @@ struct CheckoutView: View {
         .overlay(alignment: .bottom) { cta }
         .navigationTitle("Checkout")
         .navigationBarTitleDisplayMode(.inline)
-        .alert("You're all set!", isPresented: $confirmed) {
+        .alert(bookedStatus == .requested ? "Request sent!" : "You're all set!", isPresented: $confirmed) {
             Button("View trip") { dismiss() }
         } message: {
-            Text("Your \(vehicle.title) is booked in \(vehicle.city). We've added it to your Trips.")
+            Text(bookedStatus == .requested
+                 ? "Your request for the \(vehicle.title) in \(vehicle.city) was sent to the host. You'll be notified when they confirm."
+                 : "Your \(vehicle.title) is booked in \(vehicle.city). We've added it to your Trips.")
+        }
+        .alert("Couldn't book", isPresented: Binding(
+            get: { store.lastError != nil && !confirmed },
+            set: { if !$0 { store.lastError = nil } })) {
+            Button("OK", role: .cancel) { store.lastError = nil }
+        } message: {
+            Text(store.lastError ?? "")
         }
     }
 
@@ -129,11 +140,22 @@ struct CheckoutView: View {
 
     private var cta: some View {
         VStack(spacing: 0) {
-            PrimaryButton(title: vehicle.instantBook ? "Confirm booking" : "Request to book") {
-                store.addTrip(for: vehicle, start: start, end: end, total: total)
-                confirmed = true
+            PrimaryButton(title: booking ? "Booking…"
+                          : (vehicle.instantBook ? "Confirm booking" : "Request to book")) {
+                guard !booking else { return }
+                booking = true
+                Task {
+                    let trip = await store.bookTrip(for: vehicle, start: start, end: end,
+                                                    plan: plan.rawValue, total: total)
+                    booking = false
+                    if let trip {
+                        bookedStatus = trip.status
+                        confirmed = true
+                    }
+                }
             }
             .padding(16)
+            .disabled(booking)
         }
         .background(.ultraThinMaterial)
         .overlay(Rectangle().frame(height: 1).foregroundColor(Theme.hairline), alignment: .top)

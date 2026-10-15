@@ -48,8 +48,21 @@ password: demo1234
 ```
 
 - **Search** — public catalogue of all cars.
-- **Host** — *your* listings (from `/api/vehicles/mine`); add cars in the dashboard.
+- **Trips** — every trip you're in, as guest *and* host (tap for the shared
+  detail screen with status actions + messaging).
+- **Host** — *your* listings (from `/api/vehicles/mine`) + incoming bookings on
+  your cars. Tap a listing to **edit** it; tap a booking to manage it.
+- **Inbox** — your trip conversations (one thread per trip).
 - **Account** — who you're signed in as, plus Log out.
+
+### Trips & messaging
+
+A trip links a renter and a host; the backend serves the **same trip to both**
+with a `role` that decides which actions you see. Instant-Book cars confirm
+immediately; others are *Requested* until the host approves. Status moves
+(confirm / decline / start / complete / cancel) and the per-trip message thread
+are all persisted server-side — see the dashboard README for the API, the
+status lifecycle table and role-gating rules.
 
 If the backend is unreachable the app shows bundled **sample cars** so it's always
 demoable; a banner reports the exact URL + error.
@@ -93,16 +106,23 @@ Follows the system appearance.
 RentalApp.swift        @main, login gate (AuthView vs RootView), 5-tab bar
 AuthView.swift         Login / register screen
 Theme.swift            Design tokens (dark/purple), shared components
-Models.swift           Vehicle, Trip, Conversation, User, AuthResponse (Codable)
-DataStore.swift        App state: auth (token in UserDefaults), fetch, samples
+Models.swift           Vehicle, Trip, Message, User, AuthResponse (Codable)
+DataStore.swift        App state: auth, catalogue, trips, messages, listing edit
 SearchView.swift       Explore feed + vehicle cards
 VehicleDetailView.swift Listing detail + sticky book CTA
-CheckoutView.swift     Dates, protection plan, price breakdown, confirm
-TripsView.swift        Booked / history trips
-HostView.swift         Owner earnings + your listings
-InboxView.swift        Conversations
+CheckoutView.swift     Dates, protection plan, price breakdown, books via API
+TripsView.swift        Booked / history trips (guest + host) → TripDetailView
+TripDetailView.swift   Shared trip screen: status actions + message link
+MessageThreadView.swift Per-trip chat thread
+HostView.swift         Earnings, bookings on your cars, your listings
+EditListingView.swift  In-app listing editor (PUT / snooze / delete)
+InboxView.swift        Trip conversations
 ProfileView.swift      Account + logout
 ```
+
+Dates for trips/messages travel as epoch-ms numbers; `DataStore` decodes them
+with `.millisecondsSince1970`. The `Trip`/`Message` shapes match
+`dashboard/server.js` (`tripForClient` / `messageForClient`).
 
 The `Vehicle` shape in `Models.swift` is the contract with the backend
 (`db.js` / `server.js`) — keep them in sync.

@@ -37,9 +37,13 @@ struct Vehicle: Identifiable, Codable, Hashable {
     var heroURL: URL? { photos.first.flatMap(URL.init(string:)) }
 }
 
-/// A booked trip (guest side). Mirrors Turo's "Trips" tab rows.
+/// A booked trip. One trip links a renter (guest) and a host (owner); the
+/// backend sends the SAME trip to both parties, with `role` set from the
+/// viewer's perspective. Shape mirrors dashboard/server.js `tripForClient`.
+/// Dates arrive as epoch-ms numbers (decode with `.millisecondsSince1970`).
 struct Trip: Identifiable, Codable, Hashable {
     var id: String
+    var vehicleId: String?
     var vehicleTitle: String
     var vehiclePhoto: String?
     var city: String
@@ -48,15 +52,41 @@ struct Trip: Identifiable, Codable, Hashable {
     var total: Double
     var currency: String
     var status: Status
+    var plan: String?
+    var renterName: String?
+    var hostName: String?
+    var role: String?               // "renter" or "host" for the viewer
+    var counterpartyName: String?
+    var lastMessage: String?
+    var unreadCount: Int?
 
     enum Status: String, Codable {
-        case upcoming = "Upcoming"
-        case inProgress = "In progress"
-        case completed = "Completed"
-        case cancelled = "Cancelled"
+        case requested, upcoming, inProgress, completed, cancelled, declined
+
+        /// Human-readable label (the raw value is the backend wire key).
+        var label: String {
+            switch self {
+            case .requested:  return "Requested"
+            case .upcoming:   return "Upcoming"
+            case .inProgress: return "In progress"
+            case .completed:  return "Completed"
+            case .cancelled:  return "Cancelled"
+            case .declined:   return "Declined"
+            }
+        }
     }
 
+    var isHost: Bool { role == "host" }
     var photoURL: URL? { vehiclePhoto.flatMap(URL.init(string:)) }
+}
+
+/// One message in a trip's thread. `mine` is set by the backend for the viewer.
+struct Message: Identifiable, Codable, Hashable {
+    var id: String
+    var body: String
+    var senderName: String
+    var mine: Bool
+    var createdAt: Date
 }
 
 /// A signed-in account. The same account works in the web dashboard and here.
@@ -70,15 +100,6 @@ struct User: Codable, Hashable, Identifiable {
 struct AuthResponse: Codable {
     var token: String
     var user: User
-}
-
-/// An inbox conversation thread.
-struct Conversation: Identifiable, Hashable {
-    var id = UUID().uuidString
-    var name: String
-    var lastMessage: String
-    var vehicle: String
-    var unread: Bool
 }
 
 extension Double {

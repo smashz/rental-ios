@@ -8,10 +8,11 @@ import SwiftUI
 final class DataStore: ObservableObject {
     @Published var vehicles: [Vehicle] = []
     @Published var trips: [Trip] = []
-    @Published var conversations: [Conversation] = []
     @Published var savedIDs: Set<String> = []
     @Published var loadState: LoadState = .idle
     @Published var usingLiveData = false
+    /// Last non-auth action error (booking, status change, messaging), for UI.
+    @Published var lastError: String?
 
     // Auth
     @Published var currentUser: User?
@@ -33,10 +34,15 @@ final class DataStore: ObservableObject {
     private var isRefreshing = false
 
     init() {
-        trips = DataStore.sampleTrips
-        conversations = DataStore.sampleConversations
         vehicles = DataStore.sampleVehicles
         token = UserDefaults.standard.string(forKey: "rental_token")
+    }
+
+    /// Trips and messages carry dates as epoch-ms numbers on the wire.
+    private func tripDecoder() -> JSONDecoder {
+        let d = JSONDecoder()
+        d.dateDecodingStrategy = .millisecondsSince1970
+        return d
     }
 
     // MARK: - Auth
@@ -63,6 +69,7 @@ final class DataStore: ObservableObject {
             let wrapper = try JSONDecoder().decode([String: User].self, from: data)
             currentUser = wrapper["user"]
             await loadMine()
+            await loadTrips()
         } catch {
             // Offline — keep the token; the user can retry. Don't force logout.
         }
@@ -91,6 +98,7 @@ final class DataStore: ObservableObject {
                 self.token = auth.token
                 self.currentUser = auth.user
                 await loadMine()
+                await loadTrips()
                 return true
             } else {
                 let msg = (try? JSONDecoder().decode([String: String].self, from: data))?["error"]
@@ -107,6 +115,7 @@ final class DataStore: ObservableObject {
         token = nil
         currentUser = nil
         myVehicles = []
+        trips = []
     }
 
     /// The signed-in owner's own listings (Host tab).
@@ -167,17 +176,149 @@ final class DataStore: ObservableObject {
 
     func isSaved(_ id: String) -> Bool { savedIDs.contains(id) }
 
-    func addTrip(for vehicle: Vehicle, start: Date, end: Date, total: Double) {
-        let trip = Trip(
-            id: UUID().uuidString,
-            vehicleTitle: vehicle.title,
-            vehiclePhoto: vehicle.photos.first,
-            city: vehicle.city,
-            start: start, end: end,
-            total: total, currency: vehicle.currency,
-            status: .upcoming
-        )
-        trips.insert(trip, at: 0)
+    // MARK: - Trips
+
+    /// Build an authed request, or nil if we hold no token.
+    private func authed(_ path: String, method: String = "GET", json: [String: Any]? = nil) -> URLRequest? {
+        guard let token else { return nil }
+        var req = URLRequest(url: endpoint(path))
+        req.httpMethod = method
+        req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        if let json {
+            req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            req.httpBody = try? JSONSerialization.data(withJSONObject: json)
+        }
+        return req
+    }
+
+    private func errorMessage(_ data: Data, fallback: String) -> String {
+        (try? JSONDecoder().decode([String: String].self, from: data))?["error"] ?? fallback
+    }
+
+    /// All trips the signed-in user is part of — as renter or as host.
+    func loadTrips() async {
+        guard let req = authed("api/trips") else { return }
+        do {
+            let (data, resp) = try await newSession().data(for: req)
+            guard (resp as? HTTPURLResponse)?.statusCode == 200 else { return }
+            trips = try tripDecoder().decode([Trip].self, from: data)
+        } catch { /* keep previous */ }
+    }
+
+    /// Book `vehicle`. Returns the created trip, or nil (with `lastError` set).
+    func bookTrip(for vehicle: Vehicle, start: Date, end: Date, plan: String, total: Double) async -> Trip? {
+        lastError = nil
+        let body: [String: Any] = [
+            "vehicleId": vehicle.id,
+            "start": start.timeIntervalSince1970 * 1000,
+            "end": end.timeIntervalSince1970 * 1000,
+            "plan": plan,
+            "total": total,
+        ]
+        guard let req = authed("api/trips", method: "POST", json: body) else {
+            lastError = "Please sign in again."; return nil
+        }
+        do {
+            let (data, resp) = try await newSession().data(for: req)
+            let code = (resp as? HTTPURLResponse)?.statusCode ?? 0
+            guard code == 200 || code == 201 else {
+                lastError = errorMessage(data, fallback: "Booking failed (\(code))"); return nil
+            }
+            let trip = try tripDecoder().decode(Trip.self, from: data)
+            trips.insert(trip, at: 0)
+            return trip
+        } catch {
+            lastError = "Can't reach the server: \(error.localizedDescription)"; return nil
+        }
+    }
+
+    /// Move a trip to a new status (role-gated server-side). Updates in place.
+    @discardableResult
+    func setTripStatus(_ trip: Trip, to status: Trip.Status) async -> Trip? {
+        lastError = nil
+        guard let req = authed("api/trips/\(trip.id)", method: "PATCH", json: ["status": status.rawValue]) else {
+            return nil
+        }
+        do {
+            let (data, resp) = try await newSession().data(for: req)
+            guard (resp as? HTTPURLResponse)?.statusCode == 200 else {
+                lastError = errorMessage(data, fallback: "Couldn't update the trip"); return nil
+            }
+            let updated = try tripDecoder().decode(Trip.self, from: data)
+            if let i = trips.firstIndex(where: { $0.id == updated.id }) { trips[i] = updated }
+            return updated
+        } catch {
+            lastError = "Can't reach the server: \(error.localizedDescription)"; return nil
+        }
+    }
+
+    // MARK: - Messages
+
+    func loadMessages(tripId: String) async -> [Message] {
+        guard let req = authed("api/trips/\(tripId)/messages") else { return [] }
+        do {
+            let (data, resp) = try await newSession().data(for: req)
+            guard (resp as? HTTPURLResponse)?.statusCode == 200 else { return [] }
+            // Reading clears this trip's unread badge; reflect it locally.
+            if let i = trips.firstIndex(where: { $0.id == tripId }) { trips[i].unreadCount = 0 }
+            return try tripDecoder().decode([Message].self, from: data)
+        } catch { return [] }
+    }
+
+    func sendMessage(tripId: String, body: String) async -> Message? {
+        let trimmed = body.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty,
+              let req = authed("api/trips/\(tripId)/messages", method: "POST", json: ["body": trimmed])
+        else { return nil }
+        do {
+            let (data, resp) = try await newSession().data(for: req)
+            guard ((resp as? HTTPURLResponse)?.statusCode ?? 0) == 201 else { return nil }
+            let msg = try tripDecoder().decode(Message.self, from: data)
+            if let i = trips.firstIndex(where: { $0.id == tripId }) { trips[i].lastMessage = msg.body }
+            return msg
+        } catch { return nil }
+    }
+
+    // MARK: - Listing management (host)
+
+    /// Save edits to one of the owner's listings (PUT). Updates local caches.
+    func saveListing(_ v: Vehicle) async -> Vehicle? {
+        lastError = nil
+        let body: [String: Any] = [
+            "make": v.make, "model": v.model, "year": v.year, "trim": v.trim ?? "",
+            "dailyPrice": v.dailyPrice, "currency": v.currency, "city": v.city,
+            "description": v.description, "seats": v.seats, "doors": v.doors,
+            "transmission": v.transmission, "fuelType": v.fuelType,
+            "instantBook": v.instantBook, "unlimitedMiles": v.unlimitedMiles,
+            "features": v.features, "available": v.available,
+        ]
+        guard let req = authed("api/vehicles/\(v.id)", method: "PUT", json: body) else { return nil }
+        do {
+            let (data, resp) = try await newSession().data(for: req)
+            guard ((resp as? HTTPURLResponse)?.statusCode ?? 0) == 200 else {
+                lastError = errorMessage(data, fallback: "Couldn't save the listing"); return nil
+            }
+            let updated = try JSONDecoder().decode(Vehicle.self, from: data)
+            if let i = myVehicles.firstIndex(where: { $0.id == updated.id }) { myVehicles[i] = updated }
+            if let i = vehicles.firstIndex(where: { $0.id == updated.id }) { vehicles[i] = updated }
+            return updated
+        } catch {
+            lastError = "Can't reach the server: \(error.localizedDescription)"; return nil
+        }
+    }
+
+    @discardableResult
+    func deleteListing(_ id: String) async -> Bool {
+        guard let req = authed("api/vehicles/\(id)", method: "DELETE") else { return false }
+        do {
+            let (_, resp) = try await newSession().data(for: req)
+            let ok = ((resp as? HTTPURLResponse)?.statusCode ?? 0) == 204
+            if ok {
+                myVehicles.removeAll { $0.id == id }
+                vehicles.removeAll { $0.id == id }
+            }
+            return ok
+        } catch { return false }
     }
 }
 
@@ -217,25 +358,5 @@ extension DataStore {
                 instantBook: true, unlimitedMiles: true,
                 features: ["Apple CarPlay", "Lane assist", "All-wheel drive"],
                 photos: [], available: true)
-    ]
-
-    static let sampleTrips: [Trip] = {
-        let cal = Calendar.current
-        let now = Date()
-        return [
-            Trip(id: "t1", vehicleTitle: "Tesla Model 3", vehiclePhoto: nil, city: "San Francisco, CA",
-                 start: cal.date(byAdding: .day, value: 6, to: now)!,
-                 end: cal.date(byAdding: .day, value: 9, to: now)!,
-                 total: 312, currency: "USD", status: .upcoming),
-            Trip(id: "t2", vehicleTitle: "Toyota RAV4", vehiclePhoto: nil, city: "Austin, TX",
-                 start: cal.date(byAdding: .day, value: -20, to: now)!,
-                 end: cal.date(byAdding: .day, value: -17, to: now)!,
-                 total: 204, currency: "USD", status: .completed)
-        ]
-    }()
-
-    static let sampleConversations: [Conversation] = [
-        Conversation(name: "Marcus", lastMessage: "The car is charged and ready for pickup!", vehicle: "Tesla Model 3", unread: true),
-        Conversation(name: "Leo", lastMessage: "Thanks for the great trip — 5 stars!", vehicle: "Toyota RAV4", unread: false)
     ]
 }

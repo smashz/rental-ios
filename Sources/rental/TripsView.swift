@@ -1,7 +1,9 @@
 import SwiftUI
 
-/// The Trips tab (guest side). Mirrors Turo's Dashboard/BookedTrips: a
-/// Booked vs. History segmented control over a list of trip cards.
+/// The Trips tab. Shows every trip the signed-in user is part of — both the
+/// cars they've booked (as guest) and bookings on their own cars (as host) —
+/// split into Booked vs. History. Tapping a trip opens the shared detail
+/// screen that both parties see. Data is live from the backend.
 struct TripsView: View {
     @EnvironmentObject var store: DataStore
     @State private var scope: Scope = .booked
@@ -10,8 +12,10 @@ struct TripsView: View {
 
     private var shown: [Trip] {
         store.trips.filter {
-            scope == .booked ? ($0.status == .upcoming || $0.status == .inProgress)
-                             : ($0.status == .completed || $0.status == .cancelled)
+            switch $0.status {
+            case .requested, .upcoming, .inProgress: return scope == .booked
+            case .completed, .cancelled, .declined:  return scope == .history
+            }
         }
     }
 
@@ -29,14 +33,20 @@ struct TripsView: View {
                 } else {
                     ScrollView {
                         VStack(spacing: 14) {
-                            ForEach(shown) { TripRow(trip: $0) }
+                            ForEach(shown) { trip in
+                                NavigationLink(value: trip) { TripRow(trip: trip) }
+                                    .buttonStyle(.plain)
+                            }
                         }
                         .padding(.horizontal, 16).padding(.bottom, 24)
                     }
+                    .refreshable { await store.loadTrips() }
                 }
             }
             .background(Theme.background.ignoresSafeArea())
             .navigationTitle("Trips")
+            .navigationDestination(for: Trip.self) { TripDetailView(tripID: $0.id) }
+            .task { await store.loadTrips() }
         }
     }
 
@@ -46,8 +56,9 @@ struct TripsView: View {
             Image(systemName: "suitcase").font(.system(size: 48)).foregroundColor(Theme.subtle)
             Text(scope == .booked ? "No booked trips yet" : "No past trips")
                 .font(.headline).foregroundColor(Theme.ink)
-            Text("When you book a car it'll show up here.")
+            Text("When you book a car — or someone books yours — it'll show up here.")
                 .font(.subheadline).foregroundColor(Theme.subtle)
+                .multilineTextAlignment(.center).padding(.horizontal, 40)
             Spacer()
         }
         .frame(maxWidth: .infinity)
@@ -60,11 +71,15 @@ struct TripRow: View {
         HStack(spacing: 12) {
             VehiclePhoto(url: trip.photoURL, height: 80, corner: 10).frame(width: 110)
             VStack(alignment: .leading, spacing: 4) {
-                Text(trip.vehicleTitle).font(.headline).foregroundColor(Theme.ink)
+                HStack(spacing: 6) {
+                    Text(trip.vehicleTitle).font(.headline).foregroundColor(Theme.ink)
+                    if trip.isHost { roleTag }
+                }
                 Text(trip.city).font(.subheadline).foregroundColor(Theme.subtle)
                 Text(Self.range(trip.start, trip.end)).font(.subheadline).foregroundColor(Theme.subtle)
                 HStack {
                     statusBadge
+                    if let n = trip.unreadCount, n > 0 { unreadDot(n) }
                     Spacer()
                     Text(trip.total.money(trip.currency)).font(.subheadline.bold()).foregroundColor(Theme.ink)
                 }
@@ -74,8 +89,25 @@ struct TripRow: View {
         .card()
     }
 
+    private var roleTag: some View {
+        Text("Hosting")
+            .font(.caption2.weight(.bold))
+            .padding(.horizontal, 6).padding(.vertical, 2)
+            .background(Theme.accent.opacity(0.18))
+            .foregroundColor(Theme.accent)
+            .clipShape(Capsule())
+    }
+
+    private func unreadDot(_ n: Int) -> some View {
+        HStack(spacing: 3) {
+            Image(systemName: "bubble.fill").font(.system(size: 9))
+            Text("\(n)").font(.caption2.weight(.bold))
+        }
+        .foregroundColor(Theme.accent)
+    }
+
     private var statusBadge: some View {
-        Text(trip.status.rawValue)
+        Text(trip.status.label)
             .font(.caption.weight(.semibold))
             .padding(.horizontal, 8).padding(.vertical, 4)
             .background(color.opacity(0.15))
@@ -85,10 +117,11 @@ struct TripRow: View {
 
     private var color: Color {
         switch trip.status {
+        case .requested: return .orange
         case .upcoming: return Theme.accent
         case .inProgress: return .blue
         case .completed: return Theme.subtle
-        case .cancelled: return .red
+        case .cancelled, .declined: return .red
         }
     }
 

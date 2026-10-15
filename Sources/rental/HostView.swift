@@ -11,13 +11,20 @@ struct HostView: View {
     private var myCars: [Vehicle] { store.myVehicles }
     private var monthEarnings: Double { myCars.reduce(0) { $0 + $1.dailyPrice * 6 } }
 
+    // Bookings on this owner's cars (trips where the viewer is the host).
+    private var hostTrips: [Trip] { store.trips.filter { $0.isHost } }
+    private var pendingTrips: [Trip] { hostTrips.filter { $0.status == .requested } }
+
     var body: some View {
         NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: 18) {
                     earningsCard
+                    bookingsSection
                     listCTA
                     Text("Your listings").font(.title3.bold()).foregroundColor(Theme.ink)
+                    Text("Tap a car to edit its details, pricing or availability.")
+                        .font(.caption).foregroundColor(Theme.subtle)
                     if myCars.isEmpty {
                         Text("No cars yet. Add one in the Client Dashboard and it'll appear here.")
                             .font(.subheadline).foregroundColor(Theme.subtle)
@@ -25,7 +32,8 @@ struct HostView: View {
                             .padding(.vertical, 8)
                     } else {
                         ForEach(myCars) { car in
-                            HostListingRow(vehicle: car)
+                            NavigationLink(value: car) { HostListingRow(vehicle: car) }
+                                .buttonStyle(.plain)
                         }
                     }
                 }
@@ -33,7 +41,32 @@ struct HostView: View {
             }
             .background(Theme.background.ignoresSafeArea())
             .navigationTitle("Host")
-            .refreshable { await store.loadMine() }
+            .navigationDestination(for: Vehicle.self) { EditListingView(vehicle: $0) }
+            .navigationDestination(for: Trip.self) { TripDetailView(tripID: $0.id) }
+            .refreshable { await store.loadMine(); await store.loadTrips() }
+            .task { await store.loadTrips() }
+        }
+    }
+
+    @ViewBuilder private var bookingsSection: some View {
+        if !hostTrips.isEmpty {
+            VStack(alignment: .leading, spacing: 10) {
+                HStack {
+                    Text("Bookings on your cars").font(.title3.bold()).foregroundColor(Theme.ink)
+                    Spacer()
+                    if !pendingTrips.isEmpty {
+                        Text("\(pendingTrips.count) to review")
+                            .font(.caption.weight(.semibold))
+                            .padding(.horizontal, 8).padding(.vertical, 3)
+                            .background(Color.orange.opacity(0.18)).foregroundColor(.orange)
+                            .clipShape(Capsule())
+                    }
+                }
+                ForEach(hostTrips) { trip in
+                    NavigationLink(value: trip) { HostTripRow(trip: trip) }
+                        .buttonStyle(.plain)
+                }
+            }
         }
     }
 
@@ -101,9 +134,48 @@ struct HostListingRow: View {
                 }
             }
             Spacer()
-            Image(systemName: "chevron.right").foregroundColor(Theme.subtle)
+            Image(systemName: "pencil").foregroundColor(Theme.accent)
         }
         .padding(12)
         .card()
+    }
+}
+
+/// A booking on one of the owner's cars (host perspective).
+struct HostTripRow: View {
+    let trip: Trip
+    var body: some View {
+        HStack(spacing: 12) {
+            VehiclePhoto(url: trip.photoURL, height: 60, corner: 10).frame(width: 84)
+            VStack(alignment: .leading, spacing: 3) {
+                Text(trip.vehicleTitle).font(.subheadline.bold()).foregroundColor(Theme.ink)
+                Text("Guest: \(trip.renterName ?? trip.counterpartyName ?? "—")")
+                    .font(.caption).foregroundColor(Theme.subtle)
+                Text(TripRow.range(trip.start, trip.end)).font(.caption).foregroundColor(Theme.subtle)
+            }
+            Spacer()
+            VStack(alignment: .trailing, spacing: 4) {
+                Text(trip.status.label)
+                    .font(.caption2.weight(.semibold))
+                    .padding(.horizontal, 7).padding(.vertical, 3)
+                    .background(statusColor.opacity(0.15)).foregroundColor(statusColor)
+                    .clipShape(Capsule())
+                if let n = trip.unreadCount, n > 0 {
+                    Image(systemName: "bubble.fill").font(.system(size: 10)).foregroundColor(Theme.accent)
+                }
+            }
+        }
+        .padding(10)
+        .card()
+    }
+
+    private var statusColor: Color {
+        switch trip.status {
+        case .requested: return .orange
+        case .upcoming: return Theme.accent
+        case .inProgress: return .blue
+        case .completed: return .green
+        case .cancelled, .declined: return .red
+        }
     }
 }
