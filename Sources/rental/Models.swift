@@ -59,6 +59,19 @@ struct Trip: Identifiable, Codable, Hashable {
     var photoURL: URL? { vehiclePhoto.flatMap(URL.init(string:)) }
 }
 
+/// A signed-in account. The same account works in the web dashboard and here.
+struct User: Codable, Hashable, Identifiable {
+    var id: String
+    var email: String
+    var name: String
+}
+
+/// Response shape from /api/auth/login and /api/auth/register.
+struct AuthResponse: Codable {
+    var token: String
+    var user: User
+}
+
 /// An inbox conversation thread.
 struct Conversation: Identifiable, Hashable {
     var id = UUID().uuidString

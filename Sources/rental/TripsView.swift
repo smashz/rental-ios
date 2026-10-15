@@ -35,7 +35,7 @@ struct TripsView: View {
                     }
                 }
             }
-            .background(Theme.field.opacity(0.35).ignoresSafeArea())
+            .background(Theme.background.ignoresSafeArea())
             .navigationTitle("Trips")
         }
     }

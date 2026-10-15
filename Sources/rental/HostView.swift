@@ -7,8 +7,8 @@ import SwiftUI
 struct HostView: View {
     @EnvironmentObject var store: DataStore
 
-    // Treat the catalogue as "your cars" for the host demo.
-    private var myCars: [Vehicle] { store.vehicles }
+    // The signed-in owner's own listings (from /api/vehicles/mine).
+    private var myCars: [Vehicle] { store.myVehicles }
     private var monthEarnings: Double { myCars.reduce(0) { $0 + $1.dailyPrice * 6 } }
 
     var body: some View {
@@ -18,14 +18,22 @@ struct HostView: View {
                     earningsCard
                     listCTA
                     Text("Your listings").font(.title3.bold()).foregroundColor(Theme.ink)
-                    ForEach(myCars) { car in
-                        HostListingRow(vehicle: car)
+                    if myCars.isEmpty {
+                        Text("No cars yet. Add one in the Client Dashboard and it'll appear here.")
+                            .font(.subheadline).foregroundColor(Theme.subtle)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(.vertical, 8)
+                    } else {
+                        ForEach(myCars) { car in
+                            HostListingRow(vehicle: car)
+                        }
                     }
                 }
                 .padding(16).padding(.bottom, 24)
             }
-            .background(Theme.field.opacity(0.35).ignoresSafeArea())
+            .background(Theme.background.ignoresSafeArea())
             .navigationTitle("Host")
+            .refreshable { await store.loadMine() }
         }
     }
 

@@ -44,7 +44,7 @@ struct SearchView: View {
                 .padding(.horizontal, 16)
                 .padding(.bottom, 24)
             }
-            .background(Theme.field.opacity(0.35).ignoresSafeArea())
+            .background(Theme.background.ignoresSafeArea())
             .navigationTitle("Explore cars")
             .navigationDestination(for: Vehicle.self) { VehicleDetailView(vehicle: $0) }
             .refreshable { await store.refresh() }

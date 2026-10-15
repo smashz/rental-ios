@@ -10,12 +10,12 @@ struct ProfileView: View {
             List {
                 Section {
                     HStack(spacing: 14) {
-                        Circle().fill(Theme.accent.opacity(0.15)).frame(width: 60, height: 60)
-                            .overlay(Image(systemName: "person.fill")
-                                .font(.title2).foregroundColor(Theme.accentDark))
+                        Circle().fill(Theme.accent.opacity(0.18)).frame(width: 60, height: 60)
+                            .overlay(Text(String((store.currentUser?.name ?? "?").prefix(1)))
+                                .font(.title2.bold()).foregroundColor(Theme.accent))
                         VStack(alignment: .leading, spacing: 3) {
-                            Text("Alex Rivera").font(.title3.bold()).foregroundColor(Theme.ink)
-                            Text("Joined 2024 · \(store.savedIDs.count) saved")
+                            Text(store.currentUser?.name ?? "Guest").font(.title3.bold()).foregroundColor(Theme.ink)
+                            Text(store.currentUser?.email ?? "—")
                                 .font(.subheadline).foregroundColor(Theme.subtle)
                         }
                     }
@@ -38,6 +38,15 @@ struct ProfileView: View {
                 Section("Support") {
                     row("questionmark.circle", "Help center")
                     row("doc.text", "Legal")
+                }
+
+                Section {
+                    Button(role: .destructive) { store.logout() } label: {
+                        HStack {
+                            Image(systemName: "rectangle.portrait.and.arrow.right")
+                            Text("Log out")
+                        }
+                    }
                 }
 
                 Section {

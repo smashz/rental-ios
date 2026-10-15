@@ -1,61 +1,108 @@
-# Rental
+# Rental — iOS app
 
 A car-sharing marketplace, **UI modelled on a static analysis of the decrypted
 Turo iOS app** (`com.relayrides.ios.RelayRides` 26.41.0). Independent demo — not
-affiliated with Turo.
+affiliated with Turo. Built with **xtool** in WSL2 (no Xcode).
 
-Two pieces, both under this folder:
-
-| Part | Path | Stack | Role |
-|------|------|-------|------|
-| iOS app | `Sources/rental/` | SwiftUI, built with **xtool** | What renters use: Search → car detail → checkout → trips |
-| Client Dashboard | `dashboard/` | Node/Express + Tailwind | What **car owners** use to upload their cars |
-
-They share one contract: the `Vehicle` JSON shape. Owners publish cars in the
-dashboard → the app loads them from `GET /api/vehicles`.
+Renters sign in, browse cars, view details, book trips. Owners sign in with the
+**same account** and manage their listings (uploaded via the web Client
+Dashboard). App and dashboard share one backend and one account system.
 
 ```
- Owner (web)                 Backend                      Renter (iOS)
-┌───────────────┐   POST    ┌──────────────┐   GET      ┌──────────────┐
-│ Tailwind form │ ────────▶ │ Express API  │ ─────────▶ │ SearchView   │
-│ + photo upload│  multipart│ data + files │  JSON      │ DataStore    │
-└───────────────┘           └──────────────┘            └──────────────┘
+ Owner (web dashboard)         Backend (Node + SQLite)       Renter (this app)
+┌────────────────────┐  POST  ┌────────────────────┐  GET  ┌────────────────┐
+│ login + upload car │ ─────▶ │ Express · JWT auth  │ ────▶ │ SearchView     │
+└────────────────────┘ Bearer │ data/rental.db      │ JSON  │ DataStore      │
+          same /api/auth/* account works in both ───────────────────┘
 ```
 
-## Run the iOS app (WSL2 + xtool)
+## Projects / locations
+
+| Part | Location | Stack |
+|------|----------|-------|
+| iOS app (this) | `~/iOS/rental` (`\\wsl.localhost\Ubuntu\home\smash\iOS\rental`) | SwiftUI + xtool |
+| Client Dashboard + backend | `C:\Users\guara\Documents\iOS\dashboard` (Windows) | Node/Express + SQLite + Tailwind |
+
+The dashboard has its own `README.md` with the API, auth, database and full
+networking guide. This file covers the app.
+
+## Build & run (WSL2 + xtool)
 
 ```bash
 cd ~/iOS/rental
-xtool dev build            # produces xtool/rental.app
-# xtool dev           # build + install/run on a connected device/sim
+xtool dev build        # compile only → produces xtool/rental.app
+xtool dev              # build + install/run on the connected iPhone
 ```
 
-## Run the Client Dashboard
+Swift 6.4.1 / xtool 1.22.x come from swiftly via `~/.profile`, so builds must run
+in a **login shell**: `wsl -e bash -l build.sh` from Windows (see `build.sh`).
 
-```bash
-cd ~/iOS/rental/dashboard
-npm install
-npm start                  # http://localhost:3000
+## Sign in
+
+The app opens to a login screen (purple-on-black). Use the seeded demo account
+or register a new one (works in the dashboard too):
+
+```
+email:    demo@rental.app
+password: demo1234
 ```
 
-Open <http://localhost:3000>, fill in the "List your car" form, attach photos,
-Publish. Then launch the app (Search tab) — on the Simulator it reads
-`http://localhost:3000` and your new car appears. On a physical device, set
-`DataStore.apiBase` in `Sources/rental/DataStore.swift` to your machine's LAN IP.
+- **Search** — public catalogue of all cars.
+- **Host** — *your* listings (from `/api/vehicles/mine`); add cars in the dashboard.
+- **Account** — who you're signed in as, plus Log out.
 
-If the dashboard isn't running, the app falls back to bundled sample inventory,
-so it's always demoable.
+If the backend is unreachable the app shows bundled **sample cars** so it's always
+demoable; a banner reports the exact URL + error.
 
-## API
+## Pointing the app at the backend  ← the setting people miss
 
-| Method | Route | Purpose |
-|--------|-------|---------|
-| GET    | `/api/vehicles` | List all cars (the app's catalogue) |
-| GET    | `/api/vehicles/:id` | One car |
-| POST   | `/api/vehicles` | Create (multipart: fields + up to 10 photos) |
-| PUT    | `/api/vehicles/:id` | Update fields |
-| POST   | `/api/vehicles/:id/photos` | Add photos |
-| DELETE | `/api/vehicles/:id` | Remove a listing |
+`Sources/rental/DataStore.swift` has one line:
 
-The `Vehicle` shape is defined in both `dashboard/server.js` (`normalize`) and
-`Sources/rental/Models.swift` — keep them in sync.
+```swift
+static let apiBase = URL(string: "http://130.44.100.86:3000")!   // ~line 21
+```
+
+Change it to an address the **iPhone** can reach, then rebuild + reinstall:
+
+| App runs on… | `apiBase` |
+|---|---|
+| iPhone on the same Wi-Fi as the backend PC | `http://<PC-LAN-IP>:3000` (e.g. `192.168.0.11`) |
+| iPhone anywhere, backend on a public-IP host/server | `http://<SERVER-PUBLIC-IP>:3000` |
+
+Notes:
+- On a **physical iPhone, `localhost` means the phone itself** — never use it.
+- **NAT hairpin:** a phone on your home Wi-Fi hitting your *public* IP often fails
+  even if an outside browser works — use the LAN IP for local testing.
+- **Dynamic public IP:** when your ISP rotates it, update this line (or use DDNS)
+  and rebuild, or the app falls back to samples.
+- The backend must allow inbound TCP 3000 (firewall / router / cloud security
+  group). Full networking recipe — incl. Windows firewall + WSL portproxy
+  commands — is in the dashboard's `README.md`.
+- **Test first:** open `http://<apiBase-host>:3000/api/vehicles` in the phone's
+  browser. JSON = reachable.
+
+## Theme
+
+Dynamic light/dark via `Theme.swift`. Accent is **purple** (`#8B5CF6`) in both
+modes; dark mode uses a **pure-black background** with near-black raised cards.
+Follows the system appearance.
+
+## Source layout (`Sources/rental/`)
+
+```
+RentalApp.swift        @main, login gate (AuthView vs RootView), 5-tab bar
+AuthView.swift         Login / register screen
+Theme.swift            Design tokens (dark/purple), shared components
+Models.swift           Vehicle, Trip, Conversation, User, AuthResponse (Codable)
+DataStore.swift        App state: auth (token in UserDefaults), fetch, samples
+SearchView.swift       Explore feed + vehicle cards
+VehicleDetailView.swift Listing detail + sticky book CTA
+CheckoutView.swift     Dates, protection plan, price breakdown, confirm
+TripsView.swift        Booked / history trips
+HostView.swift         Owner earnings + your listings
+InboxView.swift        Conversations
+ProfileView.swift      Account + logout
+```
+
+The `Vehicle` shape in `Models.swift` is the contract with the backend
+(`db.js` / `server.js`) — keep them in sync.

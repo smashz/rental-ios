@@ -6,10 +6,19 @@ struct RentalApp: App {
 
     var body: some Scene {
         WindowGroup {
-            RootView()
-                .environmentObject(store)
-                .tint(Theme.accent)
-                .task { await store.refresh() }
+            Group {
+                if store.isAuthenticated {
+                    RootView()
+                } else {
+                    AuthView()
+                }
+            }
+            .environmentObject(store)
+            .tint(Theme.accent)
+            .task {
+                await store.restoreSession()
+                await store.refresh()
+            }
         }
     }
 }

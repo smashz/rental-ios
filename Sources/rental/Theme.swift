@@ -1,31 +1,47 @@
 import SwiftUI
+import UIKit
+
+/// A color that adapts to light / dark mode.
+private func dyn(_ light: UInt, _ dark: UInt) -> Color {
+    Color(uiColor: UIColor { trait in
+        trait.userInterfaceStyle == .dark ? UIColor(rgb: dark) : UIColor(rgb: light)
+    })
+}
+
+private extension UIColor {
+    convenience init(rgb: UInt) {
+        self.init(
+            red: CGFloat((rgb >> 16) & 0xFF) / 255,
+            green: CGFloat((rgb >> 8) & 0xFF) / 255,
+            blue: CGFloat(rgb & 0xFF) / 255,
+            alpha: 1
+        )
+    }
+}
 
 /// Design tokens for the Rental app.
 ///
-/// The visual language is modelled on the Turo decrypted bundle we analysed:
-/// a light, content-forward marketplace with large car photography, pill
-/// filters, rounded cards and a single confident accent colour used for the
-/// primary "Request to book" action. Turo ships a custom face ("TuroSans");
-/// we use the system font so the app is self-contained.
+/// Accent is purple in both modes; dark mode uses a pure-black background with
+/// slightly raised near-black cards, per the requested theme.
 enum Theme {
-    // Accent — a confident marketplace green/teal in the spirit of Turo's brand.
-    static let accent = Color(red: 0.00, green: 0.55, blue: 0.47)
-    static let accentDark = Color(red: 0.00, green: 0.42, blue: 0.36)
+    // Purple accent (constant across light/dark).
+    static let accent = Color(uiColor: UIColor(rgb: 0x8B5CF6))
+    static let accentDark = Color(uiColor: UIColor(rgb: 0x6D28D9))
 
-    static let ink = Color(red: 0.07, green: 0.09, blue: 0.11)      // near-black text
-    static let subtle = Color(red: 0.42, green: 0.45, blue: 0.49)   // secondary text
-    static let hairline = Color(red: 0.90, green: 0.91, blue: 0.93) // dividers
-    static let surface = Color(.systemBackground)
-    static let field = Color(red: 0.96, green: 0.96, blue: 0.97)
+    static let ink      = dyn(0x121719, 0xF2F2F7)   // primary text
+    static let subtle   = dyn(0x6B7280, 0x9BA1A8)   // secondary text
+    static let hairline = dyn(0xE6E8EB, 0x2A2A2E)   // dividers / borders
+    static let surface  = dyn(0xFFFFFF, 0x141416)   // card background
+    static let field    = dyn(0xF2F2F4, 0x1C1C1E)   // inputs / pills
+    static let background = dyn(0xF6F6F8, 0x000000)  // screen background (black in dark)
 
-    static let star = Color(red: 0.95, green: 0.72, blue: 0.20)
+    static let star = Color(uiColor: UIColor(rgb: 0xF5B800))
 
     static let cardRadius: CGFloat = 16
     static let controlRadius: CGFloat = 12
 }
 
-/// A rounded card surface with a soft shadow — the recurring container used by
-/// vehicle cards, trip rows and host tiles.
+/// A rounded card surface with a soft shadow.
 struct CardStyle: ViewModifier {
     func body(content: Content) -> some View {
         content
@@ -35,7 +51,7 @@ struct CardStyle: ViewModifier {
                 RoundedRectangle(cornerRadius: Theme.cardRadius, style: .continuous)
                     .stroke(Theme.hairline, lineWidth: 1)
             )
-            .shadow(color: Color.black.opacity(0.05), radius: 10, x: 0, y: 4)
+            .shadow(color: Color.black.opacity(0.18), radius: 10, x: 0, y: 4)
     }
 }
 
@@ -43,8 +59,7 @@ extension View {
     func card() -> some View { modifier(CardStyle()) }
 }
 
-/// The full-width primary action button ("Request to book", "Continue"),
-/// mirroring Turo's sticky bottom CTA.
+/// The full-width primary action button ("Request to book", "Continue").
 struct PrimaryButton: View {
     let title: String
     var enabled: Bool = true
@@ -84,7 +99,7 @@ struct Pill: View {
     }
 }
 
-/// Star rating + trip count, used on cards and detail pages.
+/// Star rating + trip count.
 struct RatingLabel: View {
     let rating: Double
     var trips: Int? = nil

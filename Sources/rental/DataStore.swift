@@ -13,6 +13,15 @@ final class DataStore: ObservableObject {
     @Published var loadState: LoadState = .idle
     @Published var usingLiveData = false
 
+    // Auth
+    @Published var currentUser: User?
+    @Published var myVehicles: [Vehicle] = []
+    @Published var authError: String?
+    private var token: String? {
+        didSet { UserDefaults.standard.set(token, forKey: "rental_token") }
+    }
+    var isAuthenticated: Bool { currentUser != nil }
+
     enum LoadState: Equatable { case idle, loading, loaded, failed(String) }
 
     /// Base URL of the dashboard backend (the hosted server's public address).
@@ -27,6 +36,89 @@ final class DataStore: ObservableObject {
         trips = DataStore.sampleTrips
         conversations = DataStore.sampleConversations
         vehicles = DataStore.sampleVehicles
+        token = UserDefaults.standard.string(forKey: "rental_token")
+    }
+
+    // MARK: - Auth
+
+    private func endpoint(_ path: String) -> URL {
+        DataStore.apiBase.appendingPathComponent(path)
+    }
+
+    private func newSession() -> URLSession {
+        let config = URLSessionConfiguration.ephemeral
+        config.timeoutIntervalForRequest = 15
+        config.waitsForConnectivity = true
+        return URLSession(configuration: config)
+    }
+
+    /// Restore a previous session on launch if we still hold a valid token.
+    func restoreSession() async {
+        guard let token, !token.isEmpty else { return }
+        do {
+            var req = URLRequest(url: endpoint("api/auth/me"))
+            req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+            let (data, resp) = try await newSession().data(for: req)
+            guard (resp as? HTTPURLResponse)?.statusCode == 200 else { logout(); return }
+            let wrapper = try JSONDecoder().decode([String: User].self, from: data)
+            currentUser = wrapper["user"]
+            await loadMine()
+        } catch {
+            // Offline — keep the token; the user can retry. Don't force logout.
+        }
+    }
+
+    func login(email: String, password: String) async -> Bool {
+        await authRequest(path: "api/auth/login", body: ["email": email, "password": password])
+    }
+
+    func register(name: String, email: String, password: String) async -> Bool {
+        await authRequest(path: "api/auth/register",
+                          body: ["name": name, "email": email, "password": password])
+    }
+
+    private func authRequest(path: String, body: [String: String]) async -> Bool {
+        authError = nil
+        do {
+            var req = URLRequest(url: endpoint(path))
+            req.httpMethod = "POST"
+            req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            req.httpBody = try JSONSerialization.data(withJSONObject: body)
+            let (data, resp) = try await newSession().data(for: req)
+            let code = (resp as? HTTPURLResponse)?.statusCode ?? 0
+            if code == 200 || code == 201 {
+                let auth = try JSONDecoder().decode(AuthResponse.self, from: data)
+                self.token = auth.token
+                self.currentUser = auth.user
+                await loadMine()
+                return true
+            } else {
+                let msg = (try? JSONDecoder().decode([String: String].self, from: data))?["error"]
+                authError = msg ?? "Sign in failed (\(code))"
+                return false
+            }
+        } catch {
+            authError = "Can't reach the server: \(error.localizedDescription)"
+            return false
+        }
+    }
+
+    func logout() {
+        token = nil
+        currentUser = nil
+        myVehicles = []
+    }
+
+    /// The signed-in owner's own listings (Host tab).
+    func loadMine() async {
+        guard let token else { return }
+        do {
+            var req = URLRequest(url: endpoint("api/vehicles/mine"))
+            req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+            let (data, resp) = try await newSession().data(for: req)
+            guard (resp as? HTTPURLResponse)?.statusCode == 200 else { return }
+            myVehicles = try JSONDecoder().decode([Vehicle].self, from: data)
+        } catch { /* keep previous */ }
     }
 
     func refresh() async {

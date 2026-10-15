@@ -48,7 +48,7 @@ struct CheckoutView: View {
             .padding(16)
             .padding(.bottom, 110)
         }
-        .background(Theme.field.opacity(0.35).ignoresSafeArea())
+        .background(Theme.background.ignoresSafeArea())
         .overlay(alignment: .bottom) { cta }
         .navigationTitle("Checkout")
         .navigationBarTitleDisplayMode(.inline)
